@@ -118,7 +118,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     'Source': ORDER_STATUS_CHANGED_SOURCE,
                     'DetailType': ORDER_STATUS_CHANGED_DETAIL_TYPE,
                     'Detail': json.dumps(event_detail),
-                    'Region': REGION
+                    
                 }
             ]
         )
