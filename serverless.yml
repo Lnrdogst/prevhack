@@ -1,0 +1,125 @@
+org: leonardogst
+service: api-pedidos-restaurante
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.13
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  memorySize: 1024
+  timeout: 20
+
+  # Usar el rol existente de tu laboratorio
+  iam:
+    role: arn:aws:iam::218146371823:role/LabRole
+
+  environment:
+    STAGE: ${self:provider.stage}
+    REGION: ${self:provider.region}
+
+    # Tablas DynamoDB
+    ORDERS_TABLE: ${self:service}-orders-${self:provider.stage}
+    WS_CONNECTIONS_TABLE: ${self:service}-ws-connections-${self:provider.stage}
+
+    # Evento de dominio
+    ORDER_STATUS_CHANGED_DETAIL_TYPE: OrderStatusChanged
+    ORDER_STATUS_CHANGED_SOURCE: orders.service
+
+    # ID de la WebSocket API (CloudFormation lo rellena)
+    # En el código Python construirás el endpoint con:
+    # f"https://{WS_API_ID}.execute-api.{REGION}.amazonaws.com/{STAGE}"
+    WS_API_ID:
+      Ref: WebsocketsApi
+
+  httpApi:
+    cors:
+      allowedOrigins:
+        - '*'
+      allowedMethods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+      allowedHeaders:
+        - Content-Type
+        - Authorization
+
+functions:
+  # Comando HTTP: operador cambia el estado del pedido
+  applyStatus:
+    handler: src/apply_status.handler
+    description: Cambia el estado de un pedido y publica OrderStatusChanged en EventBridge
+    events:
+      - httpApi:
+          method: POST
+          path: /orders/{orderId}/status
+
+  # WebSocket: usuario cliente se conecta
+  onConnect:
+    handler: src/on_connect.handler
+    description: Registra una nueva conexión WebSocket en WSConnections
+    events:
+      - websocket:
+          route: $connect
+
+  # WebSocket: usuario cliente se desconecta
+  onDisconnect:
+    handler: src/on_disconnect.handler
+    description: Elimina la conexión WebSocket de WSConnections
+    events:
+      - websocket:
+          route: $disconnect
+
+  # Evento → WebSocket: broadcast de cambios de estado
+  broadcast:
+    handler: src/broadcast.handler
+    description: Envía cambios de estado a todas las conexiones de un pedido
+    events:
+      - eventBridge:
+          pattern:
+            source:
+              - ${self:provider.environment.ORDER_STATUS_CHANGED_SOURCE}
+            detail-type:
+              - ${self:provider.environment.ORDER_STATUS_CHANGED_DETAIL_TYPE}
+
+resources:
+  Resources:
+    # Tabla de pedidos (estado real)
+    OrdersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.ORDERS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pk   # tenantId#orderId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+
+    # Tabla de conexiones WebSocket
+    WSConnectionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.WS_CONNECTIONS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pk   # tenantId#orderId
+            AttributeType: S
+          - AttributeName: sk   # connectionId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: SkIndex
+            KeySchema:
+              - AttributeName: sk
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            BillingMode: PAY_PER_REQUEST
