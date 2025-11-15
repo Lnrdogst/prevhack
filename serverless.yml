@@ -1,6 +1,5 @@
 org: leonardogst
 service: api-pedidos-restaurante
-frameworkVersion: '3'
 
 provider:
   name: aws
