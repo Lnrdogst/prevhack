@@ -11,7 +11,7 @@ provider:
 
   # Usar el rol existente de tu laboratorio
   iam:
-    role: arn:aws:iam::218146371823:role/LabRole
+    role: arn:aws:iam::292984540358:role/LabRole
 
   environment:
     STAGE: ${self:provider.stage}
